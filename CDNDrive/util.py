@@ -10,7 +10,7 @@ import json
 import time
 import tempfile
 
-bundle_dir = tempfile.gettempdir()
+bundle_dir = os.path.expanduser('~') #tempfile.gettempdir()
 cookie_fname = 'cdrive_cookies.json'
 history_fname = 'cdrive_history.json'
 
@@ -67,11 +67,15 @@ def read_history(site=None):
     else:
         return history.get(site, {})
 
-def write_history(first_4mb_sha1, meta_dict, site, url):
+def write_history(first_4mb_sha1, meta_dict, site, url, metaURL, MyPath, remark):
     history = read_history()
     history.setdefault(site, {})
     history[site][first_4mb_sha1] = meta_dict
     history[site][first_4mb_sha1]['url'] = url
+    history[site][first_4mb_sha1]['metaURL'] = metaURL
+    history[site][first_4mb_sha1]['path'] = MyPath
+    if None != remark:
+        history[site][first_4mb_sha1]['remark'] = remark
     with open(path.join(bundle_dir, history_fname), "w", encoding="utf-8") as f:
         f.write(json.dumps(history, ensure_ascii=False, indent=2))
     

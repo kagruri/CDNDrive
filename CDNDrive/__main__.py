@@ -23,6 +23,13 @@ from .drivers import *
 from .encoders import *
 from .util import *
 
+import base64
+from cryptography.fernet import Fernet
+
+import urllib, mimetypes, functools, webbrowser
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import BytesIO
+
 encoder = None
 api = None
 
@@ -30,6 +37,25 @@ succ = True
 nblocks = 0
 lock = threading.Lock()
 
+key = None
+pathTree = {}
+
+def encrypt(data):
+    global key
+    if None == key:
+        key = Fernet.generate_key()
+        print('本次密钥：', key.decode('ascii'))
+    f = Fernet(key)
+    return f.encrypt(data)
+
+def decrypt(data):
+    global key
+    if None == key:
+        key = input('请输入密钥：').encode('ascii')
+        print(key)
+    f = Fernet(key)
+    return f.decrypt(data)
+    
 def load_api_by_prefix(s):
     global api
     global encoder
@@ -45,9 +71,9 @@ def load_api_by_prefix(s):
 def fetch_meta(s):
     url = api.meta2real(s)
     if not url: return None
-    full_meta = api.image_download(url)
+    full_meta = image_download(url)
     if not full_meta: return None
-    meta_dict = json.loads(encoder.decode(full_meta).decode("utf-8"))
+    meta_dict = json.loads(decrypt(encoder.decode(full_meta)).decode("utf-8"))
     return meta_dict
 
 def login_handle(args):
@@ -82,7 +108,7 @@ def userinfo_handle(args):
 def tr_upload(i, block, block_dict):
     global succ
 
-    enco_block = encoder.encode(block)
+    enco_block = encoder.encode(encrypt(block))
     for j in range(10):
         if not succ: break
         r = api.image_upload(enco_block)
@@ -151,15 +177,19 @@ def upload_handle(args):
         'block': block_dicts,
     }
     meta = json.dumps(meta_dict, ensure_ascii=False).encode("utf-8")
-    full_meta = encoder.encode(meta)
+    full_meta = encoder.encode(encrypt(meta))
     r = api.image_upload(full_meta)
     if r['code'] == 0:
         url = r['data']
         log("元数据上传完毕")
         log(f"{meta_dict['filename']} ({size_string(meta_dict['size'])}) 上传完毕, 用时{time.time() - start_time:.1f}秒, 平均速度{size_string(meta_dict['size'] / (time.time() - start_time))}/s")
-        log(f"META URL -> {api.real2meta(url)}")
-        write_history(first_4mb_sha1, meta_dict, args.site, url)
-        return url
+        if key == None:
+            metaURL = api.real2meta(url)
+        else:
+            metaURL = f"{api.real2meta(url)}@{key.decode('utf8')}"
+        log(f"META URL -> {metaURL}")
+        write_history(first_4mb_sha1, meta_dict, args.site, url, metaURL, args.path, args.remark)
+        return (first_4mb_sha1, metaURL)
     else:
         log(f"元数据上传失败：{r.get('message')}")
         return
@@ -171,12 +201,12 @@ def tr_download(i, block_dict, f, offset):
     url = block_dict['url']
     for j in range(10):
         if not succ: break
-        block = api.image_download(url)
+        block = image_download(url)
         if not block:
             log(f"分块{i + 1}/{nblocks}第{j + 1}次下载失败")
             if j == 9: succ = False
             continue
-        block = encoder.decode(block)
+        block = decrypt(encoder.decode(block))
         if calc_sha1(block) == block_dict['sha1']:
             with lock:
                 f.seek(offset)
@@ -192,6 +222,15 @@ def download_handle(args):
     global succ
     global nblocks
 
+    # 密钥
+    global key
+    _r = args.meta.split('@')
+    if len(_r) > 1:
+        key = _r[1]
+    else:
+        key = None
+    args.meta = _r[0]
+    
     if not load_api_by_prefix(args.meta):
         log("元数据解析失败")
         return
@@ -228,13 +267,15 @@ def download_handle(args):
         f.truncate(meta_dict['size'])
     
     log(f"{path.basename(file_name)} ({size_string(meta_dict['size'])}) 下载完毕, 用时{time.time() - start_time:.1f}秒, 平均速度{size_string(meta_dict['size'] / (time.time() - start_time))}/s")
-    sha1 = calc_sha1(read_in_chunk(file_name))
-    if sha1 == meta_dict['sha1']:
-        log("文件校验通过")
-        return file_name
-    else:
-        log("文件校验未通过")
-        return
+    # sha1 = calc_sha1(read_in_chunk(file_name))
+    # if sha1 == meta_dict['sha1']:
+        # log("文件校验通过")
+        # return file_name
+    # else:
+        # log("文件校验未通过")
+        # return
+    log(f"SHA1：{meta_dict['sha1']}")
+    return file_name
 
 def info_handle(args):
     if not load_api_by_prefix(args.meta):
@@ -275,11 +316,119 @@ def interact_mode(parser, subparsers):
         except:
             pass
 
+
+class S(BaseHTTPRequestHandler):
+    def _set_headers(self, mime, length=None):
+        self.send_response(200)
+        self.send_header('Content-Type', mime)
+        self.send_header('Access-Control-Allow-Origin', '*')
+        if None != length:
+            self.send_header('Content-Length', length)
+        self.end_headers()
+
+    def do_GET(self, HEAD=False):
+        global succ, nblocks, key
+        
+        if self.path == '/favicon.ico':
+            return
+        print('头', self.headers)
+        isBrowser = not self.headers.get('User-Agent', '').startswith('rclone')
+        
+        path = self.path.rsplit('?',1)
+        para = None
+        if len(path) > 1:
+            para = path[1]
+        path = path[0]
+        path = path.split('/')[1:]
+        path = list(map(urllib.parse.unquote, path))
+        print('路径', path)
+        if path[0] != 'meta':
+            pathPoint = functools.reduce(lambda prev,to:prev[to], path[:-1], pathTree)
+            if '' == path[-1]:
+                html = f'<!DOCTYPE html><html><head><meta charset="utf-8"><title>Directory listing of {urllib.parse.unquote(self.path)}</title></head><body><h1>Directory listing of {urllib.parse.unquote(self.path)}</h1>'
+                for key, value in pathPoint.items():
+                    if type(value) == str:
+                        if key.endswith('.pdf') and isBrowser:
+                            html += f'''<a href="https://www.wulihub.com.cn/gc/J0jeLN/index.html?file={urllib.parse.quote(f'http://localhost:8081/meta/{HistoryJ[value]["metaURL"]}')}#title={key[:-4]}">{key}</a>'''
+                        else:
+                            html += f'<a href="{key}">{key}</a>'
+                        if isBrowser:
+                            html += f'\t{HistoryJ[value].get("remark", "")}<br/>'
+                        else:
+                            html += '<br/>'
+                    else:
+                        html += f'<a href="{key}/">{key}/</a><br/>'
+                html += '</body></html>'
+                self._set_headers('text/html; charset=utf-8')
+                self.wfile.write(html.encode('utf-8'))
+                return
+            else:
+                historyMeta = HistoryJ[pathPoint[path[-1]]]
+                meta = historyMeta["metaURL"]
+                if HEAD:
+                    self._set_headers(mimetypes.guess_type(historyMeta["filename"])[0], historyMeta["size"])
+                    return
+        else:
+            meta = '/'.join(path[1:])
+        print('元数据', meta)
+        _r = meta.split('@')
+        if len(_r) > 1:
+            key = _r[1]
+        else:
+            key = None
+        meta = _r[0]
+        if not load_api_by_prefix(meta):
+            log("元数据解析失败")
+            return
+            
+        meta_dict = fetch_meta(meta)
+        if not meta_dict:
+            log("元数据解析失败")
+            return
+
+        file_name = meta_dict['filename']
+        log(f"下载: {file_name} ({size_string(meta_dict['size'])}), 共有{len(meta_dict['block'])}个分块, 上传于{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(meta_dict['time']))}")
+        self._set_headers(mimetypes.guess_type(file_name)[0])
+
+        succ = True
+        nblocks = len(meta_dict['block'])
+        f = BytesIO()
+        
+        for i, block_dict in enumerate(meta_dict['block']):
+            offset = block_offset(meta_dict, i)
+            tr_download(i, block_dict, f, offset)
+            block_size = f.tell() - offset
+            f.seek(offset)
+            self.wfile.write(f.read(block_size))
+        if not succ: return
+        
+    def do_HEAD(self):
+        self.do_GET(HEAD=True)
+
+def runhttp(args, server_class=HTTPServer, handler_class=S, port=8081):
+    global pathTree, HistoryJ
+    with open(path.join(os.path.expanduser('~'), 'cdrive_history.json'), 'r', encoding="utf-8") as f:
+        HistoryJ = json.load(f)["bili"]
+    for key, item in HistoryJ.items():
+        if not "path" in item:
+            continue
+        item["path"] = item["path"].rstrip('/')
+        pare = pathTree
+        for i in item["path"].split('/')[1:]:
+            pare = pare.setdefault(i, {})
+        pare[item["filename"]] = key
+    from pprint import pprint
+    pprint(pathTree)
+    server_address = ('', port)
+    httpd = server_class(server_address, handler_class)
+    print('Starting httpd...')
+    webbrowser.open('http://localhost:8081/')
+    httpd.serve_forever()
+
 def main():
     signal.signal(signal.SIGINT, lambda signum, frame: os.kill(os.getpid(), 9))
     parser = argparse.ArgumentParser(prog="CDNDrive", description="Make Picbeds Great Cloud Storages!", formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("-v", "--version", action="version", version=f"CDNDrive version: {__version__}")
-    parser.set_defaults(func=lambda x: parser.print_help())
     subparsers = parser.add_subparsers()
     
     login_parser = subparsers.add_parser("login", help="log in to the site")
@@ -299,16 +448,18 @@ def main():
     
     upload_parser = subparsers.add_parser("upload", help="upload a file")
     upload_parser.add_argument("site", help="site", choices=drivers.keys())
+    upload_parser.add_argument("path", help="path of the file to upload")
     upload_parser.add_argument("file", help="name of the file to upload")
     upload_parser.add_argument("-b", "--block-size", default=4, type=int, help="block size in MB")
-    upload_parser.add_argument("-t", "--thread", default=4, type=int, help="upload thread number")
+    upload_parser.add_argument("-t", "--thread", default=1, type=int, help="upload thread number")
+    upload_parser.add_argument("-rm", "--remark", help="remark")
     upload_parser.set_defaults(func=upload_handle)
     
     download_parser = subparsers.add_parser("download", help="download a file")
     download_parser.add_argument("meta", help="meta url")
     download_parser.add_argument("file", nargs="?", default="", help="new file name")
     download_parser.add_argument("-f", "--force", action="store_true", help="force to overwrite if file exists")
-    download_parser.add_argument("-t", "--thread", default=8, type=int, help="download thread number")
+    download_parser.add_argument("-t", "--thread", default=2, type=int, help="download thread number")
     download_parser.set_defaults(func=download_handle)
     
     info_parser = subparsers.add_parser("info", help="show meta info")
@@ -317,8 +468,14 @@ def main():
     history_parser = subparsers.add_parser("history", help="show upload history")
     history_parser.set_defaults(func=history_handle)
     
-    args = parser.parse_args()
-    args.func(args)
+    userinfo_parser = subparsers.add_parser("http", help="run HTTP server")
+    userinfo_parser.set_defaults(func=runhttp)
+    
+    if len(sys.argv) != 1:
+        args = parser.parse_args()
+        args.func(args)
+    else:
+        interact_mode(parser, subparsers)
 
 if __name__ == "__main__":
     main()

@@ -10,15 +10,17 @@ import time
 import re
 from urllib import parse
 from CDNDrive.util import *
-from .BaseApi import BaseApi
 
-class WeiboApi(BaseApi):
+class WeiboApi:
+
+    default_hdrs = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.149 Safari/537.36'
+    }
 
     default_url = lambda self, hash: f"https://wx1.sinaimg.cn/large/{hash}.gif"
     extract_hash = lambda self, s: re.findall(r"\w{32}", s)[0]    
 
     def __init__(self):
-        super().__init__()
         self.cookies = load_cookies('weibo')
         
     def meta2real(self, url):
@@ -30,13 +32,18 @@ class WeiboApi(BaseApi):
     def real2meta(self, url):
         return 'wbdrive://' + self.extract_hash(url)
         
+    def login(self, un, pw):
+        return {
+            'code': 114514,
+            'message': '功能尚未实现，请使用 Cookie 登录'
+        }
+        
     def set_cookies(self, cookie_str):
         self.cookies = parse_cookies(cookie_str)
         save_cookies('weibo', self.cookies)
         
-    def image_download(self, url):
-        url = re.sub(r'ws(\d).sinaimg.cn', r'wx\1.sinaimg.cn', url)
-        return super().image_download(url)
+    def get_user_info(self, fmt=True):
+        return '获取用户信息功能尚未实现'
         
     def image_upload(self, img):
             

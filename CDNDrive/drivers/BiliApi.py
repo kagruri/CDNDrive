@@ -10,9 +10,8 @@ import time
 import re
 from urllib import parse
 from CDNDrive.util import *
-from .BaseApi import BaseApi
 
-class BiliApi(BaseApi):
+class BiliApi:
     app_key = "1d8b6e7d45233436"
 
     default_hdrs = {'User-Agent': "Mozilla/5.0 BiliDroid/5.51.1 (bbcallen@gmail.com)"}
@@ -22,7 +21,7 @@ class BiliApi(BaseApi):
     get_cookies = lambda self: self.cookies
     
     def __init__(self):
-        super().__init__()
+        self.cookies = {}
         self.cookies = load_cookies('bili')
         
     def meta2real(self, url):
@@ -165,7 +164,7 @@ class BiliApi(BaseApi):
         url = f"https://api.bilibili.com/x/space/myinfo"
         headers = BiliApi.default_hdrs.copy()
         headers.update({
-            'Referer': f"https://space.bilibili.com",
+            'Referer': f"https://www.bilibili.com", #f"https://space.bilibili.com",
         })
         
         try:

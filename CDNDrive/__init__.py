@@ -7,4 +7,5 @@ https://github.com/apachecn/CDNDrive"""
 __author__ = "ApacheCN"
 __email__ = "apachecn@163.com"
 __license__ = "SATA"
-__version__ = "2020.09.28.0"
+__version__ = "2020.04.10.1"
+from .__main__ import upload_handle

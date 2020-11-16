@@ -10,15 +10,17 @@ import time
 import re
 from urllib import parse
 from CDNDrive.util import *
-from .BaseApi import BaseApi
 
-class BaijiaApi(BaseApi):
+class BaijiaApi:
 
-    default_url = lambda self, md5: f"http://pic.rmb.bdstatic.com/bjh/{md5}.png"
+    default_hdrs = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.149 Safari/537.36'
+    }
+
+    default_url = lambda self, md5: f"http://pic.rmb.bdstatic.com/{md5}.png"
     extract_hash = lambda self, s: re.findall(r"[a-fA-F0-9]{32}", s)[0]    
 
     def __init__(self):
-        super().__init__()
         self.cookies = load_cookies('baidu')
         
     def meta2real(self, url):
@@ -30,24 +32,24 @@ class BaijiaApi(BaseApi):
     def real2meta(self, url):
         return 'bjdrive://' + self.extract_hash(url)
         
+    def login(self, un, pw):
+        return {
+            'code': 114514,
+            'message': '功能尚未实现，请使用 Cookie 登录'
+        }
+        
     def set_cookies(self, cookie_str):
         self.cookies = parse_cookies(cookie_str)
         save_cookies('baidu', self.cookies)
         
-    def image_download(self, url):
-        # 兼容旧式的 URL
-        if '/bjh/' in url and not self.exist_url(url):
-            url = url.replace('/bjh', '')
-        return super().image_download(url)
+    def get_user_info(self, fmt=True):
+        return '获取用户信息功能尚未实现'
         
     # 图片是否已存在
     def exist(self, md5):
         url = self.default_url(md5)
-        return self.exist_url(url)
-        
-    def exist_url(self, url):
         try:
-            r = request_retry('HEAD', url, headers=BaijiaApi.default_hdrs)
+            r = request_retry('HEAD', url, headers=BiliApi.default_hdrs)
         except:
             return
         return url if r.status_code == 200 else None

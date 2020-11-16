@@ -10,15 +10,17 @@ import time
 import re
 from urllib import parse
 from CDNDrive.util import *
-from .BaseApi import BaseApi
 
-class AliApi(BaseApi):
+class AliApi:
+
+    default_hdrs = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.149 Safari/537.36'
+    }
 
     default_url = lambda self, hash: f"https://ae01.alicdn.com/kf/{hash}.png"
     extract_hash = lambda self, s: re.findall(r"\w{34}", s)[0]    
 
     def __init__(self):
-        super().__init__()
         self.cookies = load_cookies('ali')
         
     def meta2real(self, url):
@@ -30,9 +32,18 @@ class AliApi(BaseApi):
     def real2meta(self, url):
         return 'aldrive://' + self.extract_hash(url)
         
+    def login(self, un, pw):
+        return {
+            'code': 0,
+            'message': '该 API 无需登录'
+        }
+        
     def set_cookies(self, cookie_str):
         self.cookies = parse_cookies(cookie_str)
         save_cookies('ali', self.cookies)
+        
+    def get_user_info(self, fmt=True):
+        return '该 API 无需登录'
         
     def image_upload(self, img):
             
